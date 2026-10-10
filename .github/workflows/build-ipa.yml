@@ -1,0 +1,93 @@
+
+name: Build Muguet IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      game_zip_url:
+        description: "URL direta do ZIP do jogo (opcional)"
+        required: false
+        type: string
+      bundle_id:
+        description: "Bundle ID do aplicativo"
+        required: true
+        default: "com.testing.muguet"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build-ipa:
+    name: Build iOS IPA
+    runs-on: macos-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Select stable Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Show build environment
+        run: |
+          xcodebuild -version
+          swift --version
+          uname -m
+
+      - name: Install dependencies
+        run: |
+          brew install rustup xcodegen
+          rustup-init -y --no-modify-path
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          echo "/opt/homebrew/opt/rustup/bin" >> "$GITHUB_PATH"
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install 1.98.1
+          rustup target add aarch64-apple-ios \
+            --toolchain 1.98.1
+          rustup default stable
+          rustup show
+
+      - name: Download game ZIP
+        if: ${{ inputs.game_zip_url != '' }}
+        env:
+          GAME_ZIP_URL: ${{ inputs.game_zip_url }}
+        run: |
+          curl --fail --location --retry 3 \
+            "$GAME_ZIP_URL" \
+            --output game.zip
+
+          unzip -t game.zip
+
+          unzip -Z1 game.zip | grep -E \
+            '(^|/)b/[^/]+/game\.wasm$'
+
+      - name: Build IPA
+        env:
+          BUNDLE_ID: ${{ inputs.bundle_id }}
+          FREE: "1"
+        run: |
+          chmod +x make-ios.sh
+
+          if [ -f game.zip ]; then
+            ./make-ios.sh game.zip --ipa
+          else
+            ./make-ios.sh --ipa
+          fi
+
+          test -s build/Muguet.ipa
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Muguet-iOS-IPA
+          path: build/Muguet.ipa
+          if-no-files-found: error
+          retention-days: 7
